@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: docker-daemon-config
+  namespace: kube-ops
+data:
+  daemon.json: |
+    {
+      "insecure-registries": ["154.8.138.217:1180"]
+    }
+  build_kit.toml: |
+    [registry."154.8.138.217:1180"]
+    http = true
+    insecure = true

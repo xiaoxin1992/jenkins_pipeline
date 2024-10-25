@@ -1,0 +1,140 @@
+@Library("devops@main") _
+
+def pod = libraryResource 'pod/pod.yaml'
+
+// 环境变量定义
+PROJECT_NAME = project.jobByProjectName("${JOB_NAME}")          // 获取项目名称
+ZONE_NAME =  project.jobByZone("${JOB_NAME}")                   //  获取区域名称，jenkins job名称命名规则如下: {项目名称}-{部署区域}
+DEPLOYMENT_DIR_ROOT = "deploy"                                  // kustomize 的部署仓库的根目录
+DEPLOYMENT_DIR = "${DEPLOYMENT_DIR_ROOT}/${PROJECT_NAME}"       // kustomize 的部署仓库目录
+DOCKERFILE_PATH = "${DEPLOYMENT_DIR}/docker/dockerfile.general" // Dockerfile 文件路径
+TOOLS_CONTAINER_NAME = "jnlp"                                   // jenkins agent容器名称
+DOCKER_CONTAINER_NAME = "docker"                                // docker 容器名称
+// git config
+GIT_ADDRESS = "http://gitlab.xin.cc"
+GIT_AUTH_USER_ID = "gitlab-admin"
+
+// project config
+CODE_DIR_ROOT = "code"               // 代码仓库根目录
+GIT_PROJECT_GROUP = "devops"
+CODE_GIT = gitlab.gitAddressJoin("${GIT_ADDRESS}", "${GIT_PROJECT_GROUP}", "${PROJECT_NAME}.git")
+PROJECT_TYPE = "backend"              // 表示服务是前端或后端 值可以是: backend/frontend
+// deploy config
+DEPLOY_GIT = "${GIT_ADDRESS}/devops/deploy.git"
+DEPLOY_GIT_BRANCH_NAME = "main"
+
+// harbor
+HARBOR_URL = "harbor.dyness.cn"
+DOCKER_CREDENTIALS_ID = "harbor-dyness"     // harbor的账号密码，用于执行docker login使用
+DOCKER_BUILD_KIT = "moby/buildkit:buildx-stable-1" // docker buildx 使用的镜像默认是: moby/buildkit:buildx-stable-1
+DOCKER_BUILD_PLATFORM = "linux/amd64,linux/arm64"  // 支持多架构构建 linux/amd64,linux/arm64
+pipeline {
+    agent {
+        kubernetes {
+            cloud "k8s"
+            defaultContainer  "${TOOLS_CONTAINER_NAME}"
+            yaml "${pod}"
+        }
+    }
+    parameters {
+        gitParameter description: "请选择分支", defaultValue: "${CODE_BRANCH}", name: 'CODE_BRANCH', type: 'PT_BRANCH', useRepository: "${CODE_GIT}"
+    }
+    options {
+        disableConcurrentBuilds()                       // 禁止并发构建
+        buildDiscarder(logRotator(numToKeepStr: '5'))   // 只保留最近的5个构建
+    }
+    post {
+        always {
+            script {
+                currentBuild.description = "当前Job运行时间:${currentBuild.durationString}"
+            }
+        }
+    }
+    stages {
+        stage("清理工作目录") {
+            steps {
+                script {
+                    deleteDir()
+                }
+            }
+        }
+        stage("初始化构建") {
+            steps {
+                script {
+                    CODE_BRANCH = gitlab.BranchName("${CODE_BRANCH}")
+                    currentBuild.displayName = "第${env.BUILD_NUMBER}次-构建${CODE_BRANCH}分支"      // 设置当前显示名称
+                    DOCKERFILE_PATH = "${DEPLOYMENT_DIR}/docker/dockerfile.general"                // 设置默认的dockerfile路径
+                }
+            }
+        }
+        stage("克隆代码") {
+            steps {
+                script {
+                    dir("${DEPLOYMENT_DIR_ROOT}") {
+                        log.info "开始克隆部署代码库"
+                        gitlab.clone("${DEPLOY_GIT}", "${DEPLOY_GIT_BRANCH_NAME}" , "${GIT_AUTH_USER_ID}")
+                        log.info "部署代码库克隆完成"
+                    }
+                    dir("${CODE_DIR_ROOT}") {
+                        log.info "开始克隆项目代码库"
+                        gitlab.clone("${CODE_GIT}", "${CODE_BRANCH}" , "${GIT_AUTH_USER_ID}")
+                        log.info "项目代码库克隆完成"
+                        // 设置image
+                        String CODE_COMMIT_ID = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                        String timestamp = (System.currentTimeMillis() / 1000) as long
+                        IMAGE = "${HARBOR_URL}/${PROJECT_TYPE}/${PROJECT_NAME}-${CODE_BRANCH}:${CODE_COMMIT_ID}-${timestamp}"
+                    }
+                }
+            }
+        }
+        stage("编译代码") {
+            steps {
+                container(name: "${DOCKER_CONTAINER_NAME}") {
+                    dir("${CODE_DIR_ROOT}") {
+                        script {
+                            if(fileExists("../${DEPLOYMENT_DIR}/docker/dockerfile.${ZONE_NAME}")) {
+                                DOCKERFILE_PATH = "${DEPLOYMENT_DIR}/docker/dockerfile.${ZONE_NAME}"
+                            }
+                            withCredentials([usernamePassword(credentialsId: DOCKER_CREDENTIALS_ID, usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
+                                echo "使用的镜像地址: ${IMAGE}"
+                                sh """
+                                ls -la
+                                git config --global --add safe.directory "${WORKSPACE}/code"
+                                echo "${DOCKER_PASSWORD}" | docker login ${HARBOR_URL} --username="${DOCKER_USERNAME}" --password-stdin
+                                docker buildx create --name mybuilder --use --driver docker-container --driver-opt "image=${DOCKER_BUILD_KIT}" --buildkitd-config /etc/docker/build_kit.toml --bootstrap
+                                docker buildx inspect mybuilder
+                                docker buildx build --platform "${DOCKER_BUILD_PLATFORM}" -f ../${DOCKERFILE_PATH}  -t ${IMAGE} --push .
+                                """
+                            }
+                        }
+                    }
+                    dir("${DEPLOYMENT_DIR}/overlays/${ZONE_NAME}") {
+                        sh """
+                        apk update && apk add kustomize
+                        kustomize edit set image images=${IMAGE}
+                        """
+                    }
+                }
+            }
+        }
+        stage("kustomize更新") {
+            steps {
+
+                dir("${DEPLOYMENT_DIR}/overlays/${ZONE_NAME}") {
+                    withCredentials([gitUsernamePassword(credentialsId: "${GIT_AUTH_USER_ID}", gitToolName: 'Default')]) {
+                        sh """
+                        git config --global --add safe.directory "${WORKSPACE}/deploy"
+                        ls -l
+                        cat kustomization.yaml
+                        git add kustomization.yaml
+                        git config user.name "jenkins"
+                        git config user.email "jenkins@system.com"
+                        git commit -m "update image to ${IMAGE}"
+                        git push --set-upstream origin main
+                        """
+                    }
+                }
+            }
+        }
+    }
+}
