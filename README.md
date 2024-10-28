@@ -28,3 +28,13 @@ kubectl apply -f resource/config/serviceAccount.yaml -f resource/config/configma
 ![gitlab.png](images/gitlab.png)
 ![gitlab2.png](images/gitlab2.png)
 
+
+####  gitlab仓库
+- example/code 是测试代码仓库，在gitlab中创建一个仓库，把文件放入
+- example/deploy 是部署仓库使用`kustomize`
+- example/deploy/http-test/docker 是docker构建目录，dockerfile.general是通用构建文件，后面加上后缀表示不同的环境，这个跟jenkinsfile环境配置需要保持一致, 如果找不到则使用默认的文件进行构建
+
+
+#### jenkins创建一个流水线
+名称是 `{项目名称}-{部署区域}` 比如 `http-test-beijing`
+

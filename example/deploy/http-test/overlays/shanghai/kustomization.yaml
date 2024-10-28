@@ -1,0 +1,29 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+nameSuffix: -beijing
+namespace: beijing
+
+resources:
+- ../../base
+
+patches:
+- path: resources.yaml
+- path: service.yaml
+
+replicas:
+- count: 3
+  name: gin-http
+
+labels:
+- pairs:
+    zone: beijing
+  includeSelectors: true
+  includeTemplates: true
+
+images:
+- name: images
+  newName: harbor.dyness.com.de:9443/backend/dyness-xxljob-master-amd64
+  newTag: c5550a6-20231106105540
+
+

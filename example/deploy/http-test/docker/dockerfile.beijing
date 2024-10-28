@@ -1,0 +1,12 @@
+FROM --platform=$BUILDPLATFORM golang:1.23.1  AS builder
+WORKDIR /app
+ENV GOPROXY='https://goproxy.cn,direct'
+COPY . /app
+ARG TARGETPLATFORM
+RUN CGO_ENABLED=0 GOOS=$(echo ${TARGETPLATFORM} | cut -d '/' -f1) GOARCH=$(echo ${TARGETPLATFORM} | cut -d '/' -f2) go build -o http-test .
+
+FROM alpine:3.20.3
+WORKDIR /app
+COPY --from=builder /app/http-test .
+EXPOSE 8080
+CMD ["./http-test"]

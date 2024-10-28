@@ -1,0 +1,16 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gin-http
+spec:
+  template:
+    spec:
+      containers:
+        - name: gin-http
+          image: images
+          env:
+          - name: VERSION
+            value: 0.0.1
+          ports:
+            - name: http
+              containerPort: 8080
