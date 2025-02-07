@@ -11,12 +11,14 @@ spec:
     - name: "jnlp"
       image: "jenkins/inbound-agent:alpine3.20-jdk21"
       workingDir: "/home/jenkins/agent"
+      tty: true
       volumeMounts:
         - mountPath: "/home/jenkins/agent"
           name: "workspace"
     - name: "docker"
       image: "docker:27.3.1-dind-alpine3.20"
       workingDir: "/home/jenkins/agent"
+      tty: true
       volumeMounts:
         - name: "workspace"
           mountPath: "/home/jenkins/agent"
