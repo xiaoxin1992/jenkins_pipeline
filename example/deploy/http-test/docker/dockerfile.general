@@ -1,12 +1,20 @@
-FROM --platform=$BUILDPLATFORM golang:1.23.1  AS builder
+# 第一阶段：构建应用
+FROM --platform=linux/amd64 golang:1.23.1 AS builder
 WORKDIR /app
-ENV GOPROXY='https://goproxy.cn,direct'
+ENV GOPROXY=https://goproxy.io,direct
 COPY . /app
-ARG TARGETPLATFORM
-RUN CGO_ENABLED=0 GOOS=$(echo ${TARGETPLATFORM} | cut -d'/'-f1) GOARCH=$(echo ${TARGETPLATFORM} | cut -d'/'-f2) go build -o http-test .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o http-test-amd64 .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o http-test-arm64 .
 
-FROM alpine:3.20.3
+# 第二阶段：为不同平台复制构建文件
+FROM --platform=linux/amd64 alpine:3.20.3 AS amd64
 WORKDIR /app
-COPY --from=builder /app/http-test .
+COPY --from=builder /app/http-test-amd64 .
 EXPOSE 8080
-CMD ["./http-test"]
+CMD ["./http-test-amd64"]
+
+FROM --platform=linux/arm64 alpine:3.20.3 AS arm64
+WORKDIR /app
+COPY --from=builder /app/http-test-arm64 .
+EXPOSE 8080
+CMD ["./http-test-arm64"]
