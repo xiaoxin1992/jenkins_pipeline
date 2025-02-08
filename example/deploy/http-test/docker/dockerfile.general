@@ -1,20 +1,18 @@
 # 第一阶段：构建应用
-FROM --platform=linux/amd64 golang:1.23.1 AS builder
+FROM --platform=linux/amd64 harbor.dyness.cn/base/golang:1.23.6 AS build_amd64
 WORKDIR /app
 ENV GOPROXY=https://goproxy.io,direct
 COPY . /app
+
+# 编译适用于所有架构的二进制文件
+RUN go mod tidy
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o http-test-amd64 .
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o http-test-arm64 .
 
 # 第二阶段：为不同平台复制构建文件
-FROM --platform=linux/amd64 alpine:3.20.3 AS amd64
+FROM harbor.dyness.cn/base/alpine:3.21.2
 WORKDIR /app
-COPY --from=builder /app/http-test-amd64 .
+ARG TARGETARCH
+COPY --from=build_amd64 /app/http-test-${TARGETARCH} ./http-test
 EXPOSE 8080
-CMD ["./http-test-amd64"]
-
-FROM --platform=linux/arm64 alpine:3.20.3 AS arm64
-WORKDIR /app
-COPY --from=builder /app/http-test-arm64 .
-EXPOSE 8080
-CMD ["./http-test-arm64"]
+CMD ["./http-test"]
